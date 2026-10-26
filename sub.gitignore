@@ -1,0 +1,14 @@
+# База данных
+*.db
+subscriptions.db
+
+# Файлы сборки PyInstaller / Python
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# Временные файлы системы
+.DS_Store
+Thumbs.db

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Финансовый трекер</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen p-8">
+  <div class="max-w-4xl mx-auto space-y-8">
+    
+    <!-- Шапка -->
+    <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+      <h1 class="text-3xl font-bold text-indigo-400">Мой финансовый трекер</h1>
+      <div class="flex flex-wrap gap-2">
+        <label class="bg-sky-600 hover:bg-sky-500 text-white font-semibold py-2 px-4 rounded-lg shadow cursor-pointer transition-colors text-sm">
+          📄 Загрузить Uzum (PDF)
+          <input type="file" id="pdfUpload" accept=".pdf" class="hidden" onchange="uploadPDF()">
+        </label>
+        <a href="http://127.0.0.1:8000/api/subscriptions/export" target="_blank" class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 px-4 rounded-lg shadow transition-colors text-sm">
+          📊 Экспорт
+        </a>
+      </div>
+    </div>
+
+    <!-- Вкладки -->
+    <div class="flex border-b border-slate-700 gap-4">
+      <button id="tabSubsBtn" type="button" onclick="switchTab('subs')" class="pb-3 px-4 text-lg font-bold border-b-2 border-indigo-500 text-indigo-400">
+        🔄 Подписки
+      </button>
+      <button id="tabTxsBtn" type="button" onclick="switchTab('txs')" class="pb-3 px-4 text-lg font-bold border-b-2 border-transparent text-slate-400 hover:text-white">
+        💳 Все расходы (Такси, Еда, Банкоматы)
+      </button>
+    </div>
+
+    <!-- ВКЛАДКА 1: ПОДПИСКИ -->
+    <div id="subsTab" class="space-y-8">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow">
+          <p class="text-slate-400 text-sm">Подписки в месяц</p>
+          <p id="totalMonth" class="text-2xl font-bold text-indigo-400 mt-1">0 сум</p>
+        </div>
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow">
+          <p class="text-slate-400 text-sm">Прогноз подписок за год</p>
+          <p id="totalYear" class="text-2xl font-bold text-emerald-400 mt-1">0 сум</p>
+        </div>
+      </div>
+
+      <form id="subForm" class="bg-slate-800 p-6 rounded-xl space-y-4 shadow-lg border border-slate-700">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <input type="text" id="title" placeholder="Название подписки" required class="p-3 bg-slate-700 rounded border border-slate-600 text-white">
+          <input type="number" id="price" placeholder="Цена" step="0.01" required class="p-3 bg-slate-700 rounded border border-slate-600 text-white">
+          <select id="currency" class="p-3 bg-slate-700 rounded border border-slate-600 text-white">
+            <option value="сум">UZS (сум)</option>
+            <option value="$">USD ($)</option>
+            <option value="руб">RUB (руб)</option>
+          </select>
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded transition-colors">Добавить</button>
+        </div>
+      </form>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold text-slate-300">Список подписок</h2>
+            <button onclick="clearSubscriptions()" class="bg-rose-600 hover:bg-rose-500 text-white font-semibold py-1 px-3 rounded text-xs shadow transition-colors">
+              🗑️ Очистить подписки
+            </button>
+          </div>
+          <ul id="subList" class="space-y-3"></ul>
+        </div>
+        <div class="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700 flex flex-col justify-center items-center">
+          <h2 class="text-xl font-semibold mb-4 text-slate-300">Распределение подписок</h2>
+          <div class="w-full max-w-xs">
+            <canvas id="expenseChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ВКЛАДКА 2: ВСЕ РАСХОДЫ -->
+    <div id="txsTab" class="space-y-8 hidden">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow">
+          <p class="text-slate-400 text-sm">Общая сумма трат</p>
+          <p id="totalTxs" class="text-2xl font-bold text-sky-400 mt-1">0 сум</p>
+        </div>
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow">
+          <p class="text-slate-400 text-sm">Главная статья трат</p>
+          <p id="topCategory" class="text-2xl font-bold text-amber-400 mt-1">—</p>
+        </div>
+      </div>
+
+      <form id="txForm" class="bg-slate-800 p-6 rounded-xl space-y-4 shadow-lg border border-slate-700">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <input type="text" id="txTitle" placeholder="Расход (например, Такси Yandex)" required class="p-3 bg-slate-700 rounded border border-slate-600 text-white">
+          <input type="number" id="txPrice" placeholder="Сумма" step="0.01" required class="p-3 bg-slate-700 rounded border border-slate-600 text-white">
+          <select id="txCategory" class="p-3 bg-slate-700 rounded border border-slate-600 text-white">
+            <option value="Такси (Yandex Go)">Такси (Yandex Go)</option>
+            <option value="Такси (MyTaxi)">Такси (MyTaxi)</option>
+            <option value="Игры и Развлечения">Игры и Развлечения</option>
+            <option value="Снятие наличных">Снятие наличных</option>
+            <option value="Переводы (P2P)">Переводы (P2P)</option>
+            <option value="Покупки и Магазины">Покупки и Магазины</option>
+          </select>
+          <button type="submit" class="bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 px-6 rounded transition-colors">Добавить расход</button>
+        </div>
+      </form>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold text-slate-300">История всех операций</h2>
+            <button onclick="clearTransactions()" class="bg-rose-600 hover:bg-rose-500 text-white font-semibold py-1 px-3 rounded text-xs shadow transition-colors">
+              🗑️ Очистить расходы
+            </button>
+          </div>
+          <ul id="txList" class="space-y-3 max-h-96 overflow-y-auto"></ul>
+        </div>
+        <div class="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700 flex flex-col justify-center items-center">
+          <h2 class="text-xl font-semibold mb-4 text-slate-300">Аналитика по категориям</h2>
+          <div class="w-full max-w-xs">
+            <canvas id="categoryChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const API_SUBS = "http://127.0.0.1:8000/api/subscriptions";
+    const API_TXS = "http://127.0.0.1:8000/api/transactions";
+    let subChartInstance = null;
+    let txChartInstance = null;
+
+    function formatNumber(num) {
+      if (num === null || num === undefined || isNaN(num)) return '0';
+      return Math.round(num).toLocaleString('ru-RU');
+    }
+
+    function switchTab(tab) {
+      const subsTab = document.getElementById('subsTab');
+      const txsTab = document.getElementById('txsTab');
+      const subsBtn = document.getElementById('tabSubsBtn');
+      const txsBtn = document.getElementById('tabTxsBtn');
+
+      if (tab === 'subs') {
+        subsTab.classList.remove('hidden');
+        txsTab.classList.add('hidden');
+        subsBtn.className = "pb-3 px-4 text-lg font-bold border-b-2 border-indigo-500 text-indigo-400";
+        txsBtn.className = "pb-3 px-4 text-lg font-bold border-b-2 border-transparent text-slate-400 hover:text-white";
+        loadSubscriptions();
+      } else {
+        subsTab.classList.add('hidden');
+        txsTab.classList.remove('hidden');
+        txsBtn.className = "pb-3 px-4 text-lg font-bold border-b-2 border-sky-500 text-sky-400";
+        subsBtn.className = "pb-3 px-4 text-lg font-bold border-b-2 border-transparent text-slate-400 hover:text-white";
+        loadTransactions();
+      }
+    }
+
+    async function loadSubscriptions() {
+      try {
+        const res = await fetch(API_SUBS);
+        if (!res.ok) return;
+        const subs = await res.json();
+        const list = document.getElementById('subList');
+        list.innerHTML = '';
+        let labels = [], data = [], sum = 0;
+
+        subs.forEach(s => {
+          labels.push(s.title);
+          data.push(s.price);
+          sum += s.price;
+          const li = document.createElement('li');
+          li.className = 'flex justify-between items-center bg-slate-700 p-3 rounded';
+          li.innerHTML = `<span><strong>${s.title}</strong> — ${formatNumber(s.price)} ${s.currency}</span><button onclick="deleteSub(${s.id})" class="text-red-400 hover:text-red-300 text-sm">Удалить</button>`;
+          list.appendChild(li);
+        });
+
+        document.getElementById('totalMonth').innerText = `${formatNumber(sum)} сум`;
+        document.getElementById('totalYear').innerText = `${formatNumber(sum * 12)} сум`;
+        renderSubChart(labels, data);
+      } catch (err) {
+        console.error("Ошибка загрузки подписок:", err);
+      }
+    }
+
+    async function loadTransactions() {
+      try {
+        const res = await fetch(API_TXS);
+        if (!res.ok) return;
+        const txs = await res.json();
+        const list = document.getElementById('txList');
+        list.innerHTML = '';
+        
+        let categoryTotals = {};
+        let totalSum = 0;
+
+        txs.forEach(t => {
+          totalSum += t.price;
+          if (!categoryTotals[t.category]) categoryTotals[t.category] = 0;
+          categoryTotals[t.category] += t.price;
+
+          const li = document.createElement('li');
+          li.className = 'flex justify-between items-center bg-slate-700 p-3 rounded text-sm';
+          li.innerHTML = `<div><p class="font-bold">${t.title}</p><p class="text-xs text-slate-400">${t.category}</p></div><span>${formatNumber(t.price)} сум <button onclick="deleteTx(${t.id})" class="text-red-400 ml-2">✕</button></span>`;
+          list.appendChild(li);
+        });
+
+        document.getElementById('totalTxs').innerText = `${formatNumber(totalSum)} сум`;
+        
+        let topCat = "—", maxVal = 0;
+        Object.entries(categoryTotals).forEach(([cat, val]) => {
+          if (val > maxVal) { maxVal = val; topCat = cat; }
+        });
+        document.getElementById('topCategory').innerText = topCat;
+
+        renderTxChart(Object.keys(categoryTotals), Object.values(categoryTotals));
+      } catch (err) {
+        console.error("Ошибка загрузки транзакций:", err);
+      }
+    }
+
+    async function clearSubscriptions() {
+      if (confirm("Удалить только список подписок?")) {
+        try {
+          const res = await fetch("http://127.0.0.1:8000/api/subscriptions/clear-all", { method: "DELETE" });
+          const data = await res.json();
+          alert(data.message);
+          loadSubscriptions();
+        } catch (err) {
+          alert("Ошибка очистки подписок.");
+        }
+      }
+    }
+
+    async function clearTransactions() {
+      if (confirm("Удалить всю историю расходов?")) {
+        try {
+          const res = await fetch("http://127.0.0.1:8000/api/transactions/clear-all", { method: "DELETE" });
+          const data = await res.json();
+          alert(data.message);
+          loadTransactions();
+        } catch (err) {
+          alert("Ошибка очистки расходов.");
+        }
+      }
+    }
+
+    async function uploadPDF() {
+      const fileInput = document.getElementById('pdfUpload');
+      if (!fileInput.files[0]) return;
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+
+      try {
+        const res = await fetch("http://127.0.0.1:8000/api/subscriptions/upload-statement", { method: "POST", body: formData });
+        const data = await res.json();
+        alert(data.message);
+        loadSubscriptions();
+        loadTransactions();
+      } catch (err) {
+        alert("Ошибка отправки файла на сервер.");
+      }
+    }
+
+    async function deleteSub(id) { await fetch(`${API_SUBS}/${id}`, { method: 'DELETE' }); loadSubscriptions(); }
+    async function deleteTx(id) { await fetch(`${API_TXS}/${id}`, { method: 'DELETE' }); loadTransactions(); }
+
+    document.getElementById('subForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await fetch(API_SUBS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: document.getElementById('title').value, price: parseFloat(document.getElementById('price').value), currency: document.getElementById('currency').value })
+      });
+      document.getElementById('title').value = ''; document.getElementById('price').value = ''; loadSubscriptions();
+    });
+
+    document.getElementById('txForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await fetch(API_TXS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: document.getElementById('txTitle').value, price: parseFloat(document.getElementById('txPrice').value), category: document.getElementById('txCategory').value })
+      });
+      document.getElementById('txTitle').value = ''; document.getElementById('txPrice').value = ''; loadTransactions();
+    });
+
+    function renderSubChart(labels, data) {
+      const canvas = document.getElementById('expenseChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (subChartInstance) subChartInstance.destroy();
+      subChartInstance = new Chart(ctx, { type: 'doughnut', data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'] }] }, options: { plugins: { legend: { labels: { color: '#fff' } } } } });
+    }
+
+    function renderTxChart(labels, data) {
+      const canvas = document.getElementById('categoryChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (txChartInstance) txChartInstance.destroy();
+      txChartInstance = new Chart(ctx, { type: 'doughnut', data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#0284c7', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6'] }] }, options: { plugins: { legend: { labels: { color: '#fff' } } } } });
+    }
+
+    loadSubscriptions();
+  </script>
+</body>
+</html>
