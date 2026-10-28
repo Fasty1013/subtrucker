@@ -574,72 +574,97 @@ async def upload_statement(file: UploadFile = File(...)):
         for page in reader.pages:
             full_text += (page.extract_text() or "") + "\n"
 
-        lines = [line.strip() for line in full_text.split("\n") if line.strip()]
-
         conn = get_db()
         cursor = conn.cursor()
 
         added_txs = 0
         added_subs = 0
 
-        # Ключевые слова начала транзакции в выписке Uzum Bank и других
-        trigger_keywords = [
-            "Оплата по карте", "Снятие наличных", "P2P", "Комиссия",
-            "Покупка", "Платеж", "Списание", "Оплата услуг"
-        ]
+        # Сначала проверяем структурированный формат выписки Uzum Bank
+        pattern = r'(?m)^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(\d{2}\.\d{2}\.\d{4})\s+(\d+)\s+([\d\.]+)\s+(.*?)(?=^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}|\Z)'
+        matches = list(re.finditer(pattern, full_text, re.DOTALL))
 
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            if any(keyword in line for keyword in trigger_keywords):
-                block_lines = lines[max(0, i - 3):min(len(lines), i + 7)]
-                block_text = " ".join(block_lines)
+        if matches:
+            for m in matches:
+                bank_dt, doc_d, doc_num, amount_str, desc = m.groups()
+                amount = float(amount_str)
+                mid_match = re.search(r"MID\s*([A-Z0-9]+)", desc)
+                mid = mid_match.group(1) if mid_match else ""
 
-                amount = extract_exact_amount(block_lines)
-                date_str = extract_date(block_lines)
-                if not date_str:
-                    date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+                title, category = categorize_transaction(desc, "", mid)
 
-                if amount > 0:
-                    mid_match = re.search(r"MID\s*([A-Z0-9]+)", block_text)
-                    mid = mid_match.group(1) if mid_match else ""
+                # Ищем точную дату и время совершения операции в назначении платежа
+                actual_dt_match = re.search(r'(\d{4}-\d{2}-\d{2})\s+(\d{2})[\.:](\d{2})(?:[\.:](\d{2}))?', desc)
+                if actual_dt_match:
+                    y_m_d, hh, mm, ss = actual_dt_match.groups()
+                    y, mo, d = y_m_d.split('-')
+                    date_str = f'{d}.{mo}.{y}' if hh == '00' and mm == '00' else f'{d}.{mo}.{y} {hh}:{mm}'
+                else:
+                    b_date, b_time = bank_dt.split(' ')
+                    y, mo, d = b_date.split('-')
+                    date_str = f'{d}.{mo}.{y} {b_time[:5]}'
 
-                    title, category = categorize_transaction(block_text, line, mid)
+                cursor.execute(
+                    "INSERT INTO transactions (title, price, category, date) VALUES (?, ?, ?, ?)",
+                    (title, amount, category, date_str)
+                )
+                added_txs += 1
 
-                    cursor.execute(
-                        "INSERT INTO transactions (title, price, category, date) VALUES (?, ?, ?, ?)",
-                        (title, amount, category, date_str)
-                    )
-                    added_txs += 1
+                # Автоматическое определение подписок (Такси строго исключено)
+                is_sub = False
+                is_taxi = "такси" in category.lower() or "такси" in title.lower() or "yandex go" in title.lower() or "mytaxi" in title.lower() or mid in ["E0172009", "000000010010558"]
+                is_excluded = is_taxi or category in ["Снятие наличных", "Переводы (P2P)"]
 
-                    # Автоматическое определение подписок:
-                    # ВАЖНО: Такси (Yandex Go, MyTaxi), P2P и банкоматы НИКОГДА не считаются подписками!
-                    is_sub = False
-                    is_taxi = "такси" in category.lower() or "такси" in title.lower() or "yandex go" in title.lower() or "mytaxi" in title.lower() or mid in ["E0172009", "000000010010558"]
-                    is_excluded = is_taxi or category in ["Снятие наличных", "Переводы (P2P)"]
+                if not is_excluded:
+                    if amount in [1700.0, 2500.0] and ("10009584" in desc or "10009581" in desc or "MLBB" in title):
+                        is_sub = True
+                    elif any(s in desc.lower() for s in ["yandex plus", "яндекс плюс", "plus.yandex"]):
+                        is_sub = True
+                    elif any(s in desc.lower() for s in ["telegram premium", "spotify", "netflix", "youtube premium"]):
+                        is_sub = True
 
-                    if not is_excluded:
-                        # 1. Фиксированные суммы донатов / игровых сервисов
-                        if amount in [1700.0, 2500.0] and ("10009584" in block_text or "10009581" in block_text or "MLBB" in title):
-                            is_sub = True
-                        # 2. Яндекс Плюс (только если прямо указано Plus/Плюс в выписке, а НЕ такси)
-                        elif any(s in block_text.lower() for s in ["yandex plus", "яндекс плюс", "plus.yandex"]):
-                            is_sub = True
-                        # 3. Другие цифровые подписки
-                        elif any(s in block_text.lower() for s in ["telegram premium", "spotify", "netflix", "youtube premium"]):
-                            is_sub = True
+                if is_sub:
+                    sub_title = f"{title} ({int(amount)} сум)"
+                    cursor.execute("SELECT id FROM subscriptions WHERE title = ?", (sub_title,))
+                    if not cursor.fetchone():
+                        cursor.execute(
+                            "INSERT INTO subscriptions (title, price, currency, category, billing_cycle) VALUES (?, ?, ?, ?, ?)",
+                            (sub_title, amount, "сум", category, "месяц")
+                        )
+                        added_subs += 1
+        else:
+            # Fallback построчный парсер
+            lines = [line.strip() for line in full_text.split("\n") if line.strip()]
+            trigger_keywords = [
+                "Оплата по карте", "Снятие наличных", "P2P", "Комиссия",
+                "Покупка", "Платеж", "Списание", "Оплата услуг"
+            ]
 
-                    if is_sub:
-                        sub_title = f"{title} ({int(amount)} сум)"
-                        cursor.execute("SELECT id FROM subscriptions WHERE title = ?", (sub_title,))
-                        if not cursor.fetchone():
-                            cursor.execute(
-                                "INSERT INTO subscriptions (title, price, currency, category, billing_cycle) VALUES (?, ?, ?, ?, ?)",
-                                (sub_title, amount, "сум", category, "месяц")
-                            )
-                            added_subs += 1
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                if any(keyword in line for keyword in trigger_keywords):
+                    block_lines = lines[max(0, i - 3):min(len(lines), i + 7)]
+                    block_text = " ".join(block_lines)
 
-            i += 1
+                    amount = extract_exact_amount(block_lines)
+                    date_str = extract_date(block_lines)
+                    if not date_str:
+                        date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+
+                    if amount > 0:
+                        mid_match = re.search(r"MID\s*([A-Z0-9]+)", block_text)
+                        mid = mid_match.group(1) if mid_match else ""
+
+                        title, category = categorize_transaction(block_text, line, mid)
+
+                        cursor.execute(
+                            "INSERT INTO transactions (title, price, category, date) VALUES (?, ?, ?, ?)",
+                            (title, amount, category, date_str)
+                        )
+                        added_txs += 1
+
+                i += 1
 
         conn.commit()
         conn.close()

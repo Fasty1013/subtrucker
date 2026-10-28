@@ -430,7 +430,8 @@
             <!-- Селект сортировки -->
             <select id="txSortSelect" onchange="applyTransactionFilters()"
               class="py-2 px-3 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-sky-500 transition-colors">
-              <option value="date_desc">Сначала новые</option>
+              <option value="date_desc">Сначала новые (по дате)</option>
+              <option value="date_asc">Сначала старые (по дате)</option>
               <option value="price_desc">Сначала дорогие</option>
               <option value="price_asc">Сначала дешевые</option>
             </select>
@@ -1258,6 +1259,25 @@
       }
     }
 
+    function parseDateForSort(str) {
+      if (!str) return 0;
+      const parts = str.trim().split(' ');
+      const dParts = parts[0].split('.');
+      if (dParts.length === 3) {
+        const d = parseInt(dParts[0], 10);
+        const m = parseInt(dParts[1], 10) - 1;
+        const y = parseInt(dParts[2], 10);
+        let hh = 0, mm = 0;
+        if (parts[1]) {
+          const tParts = parts[1].split(':');
+          hh = parseInt(tParts[0], 10) || 0;
+          mm = parseInt(tParts[1], 10) || 0;
+        }
+        return new Date(y, m, d, hh, mm).getTime();
+      }
+      return 0;
+    }
+
     function applyTransactionFilters() {
       const search = (document.getElementById('txSearchInput').value || '').toLowerCase().trim();
       const category = document.getElementById('txCategorySelect').value;
@@ -1281,9 +1301,16 @@
         filtered.sort((a, b) => b.price - a.price);
       } else if (sortBy === 'price_asc') {
         filtered.sort((a, b) => a.price - b.price);
+      } else if (sortBy === 'date_asc') {
+        filtered.sort((a, b) => parseDateForSort(a.date) - parseDateForSort(b.date));
       } else {
-        // Сначала новые (по id DESC)
-        filtered.sort((a, b) => b.id - a.id);
+        // Сначала новые (по дате DESC, fallback по id)
+        filtered.sort((a, b) => {
+          const tA = parseDateForSort(a.date);
+          const tB = parseDateForSort(b.date);
+          if (tA && tB && tA !== tB) return tB - tA;
+          return b.id - a.id;
+        });
       }
 
       document.getElementById('filteredCountBadge').innerText = `${filtered.length} из ${allTransactions.length}`;
